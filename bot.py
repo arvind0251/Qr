@@ -1,19 +1,22 @@
 import logging
 import requests
 import pandas as pd
-from datetime import timedelta
+import numpy as np
+from datetime import datetime, timedelta
 import pytz
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
 from telegram import Update
 from telegram.ext import Updater, CommandHandler, CallbackContext
 
-# Setup logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
-)
+# Logging setup
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TWELVE_API_KEY = '210fdbf5fb9a488e819654b9d51b7edf'  # Tumhari Twelve Data API key
-TELEGRAM_BOT_TOKEN = '7430804447:AAHWWJXODevJ5JuT-sCujdcxHMYUnFVSn_c'  # Telegram bot token
+# Configs
+TWELVE_API_KEY = 'RFGIIVCI3VGEZ41Y'
+TELEGRAM_BOT_TOKEN = '7430804447:AAHWWJXODevJ5JuT-sCujdcxHMYUnFVSn_c'
 
 SUPPORTED_PAIRS = {
     'AUDCAD': 'AUD/CAD',
@@ -25,107 +28,104 @@ SUPPORTED_PAIRS = {
     'AUDJPY': 'AUD/JPY'
 }
 
-def fetch_candle_data(symbol: str):
-    """Fetch latest 50 15-min candles for given forex pair from Twelve Data"""
-    twelve_symbol = SUPPORTED_PAIRS[symbol]
+SUPPORTED_INTERVALS = ['1min', '5min', '15min']
+
+def fetch_candles(symbol: str, interval: str, limit=100):
     url = (
-        f"https://api.twelvedata.com/time_series?symbol={twelve_symbol}"
-        f"&interval=15min&outputsize=50&apikey={TWELVE_API_KEY}"
+        f"https://api.twelvedata.com/time_series?symbol={SUPPORTED_PAIRS[symbol]}"
+        f"&interval={interval}&outputsize={limit}&apikey={TWELVE_API_KEY}"
     )
     response = requests.get(url)
-    if response.status_code != 200:
-        logger.error(f"Failed to fetch data for {symbol}, status code: {response.status_code}")
-        return None
     data = response.json()
+
     if "values" not in data:
-        logger.error(f"No candle data found for {symbol}: {data}")
+        logger.error(f"Failed to fetch candles: {data}")
         return None
 
     df = pd.DataFrame(data["values"])
-    df = df.rename(columns={
-        'open': 'open',
-        'high': 'high',
-        'low': 'low',
-        'close': 'close',
-        'datetime': 'datetime'
-    })
     df['datetime'] = pd.to_datetime(df['datetime'])
     df = df.sort_values('datetime')
     for col in ['open', 'high', 'low', 'close']:
         df[col] = df[col].astype(float)
-    df = df.set_index('datetime')
+    df.set_index('datetime', inplace=True)
     return df
 
-def simple_candle_prediction(df: pd.DataFrame):
-    """Predict next candle bullish or bearish using simple heuristic"""
-    last_candle = df.iloc[-1]
-    if last_candle['close'] > last_candle['open']:
-        return "Bullish (Green Candle)"
-    else:
-        return "Bearish (Red Candle)"
+def create_lstm_model():
+    model = Sequential([
+        LSTM(50, return_sequences=False, input_shape=(10, 1)),
+        Dense(1)
+    ])
+    model.compile(optimizer='adam', loss='mse')
+    return model
 
-def price_command(update: Update, context: CallbackContext):
-    if not context.args:
-        update.message.reply_text("Please provide a symbol, e.g., /price AUDUSD")
-        return
-    symbol = context.args[0].upper()
-    if symbol not in SUPPORTED_PAIRS:
-        update.message.reply_text(f"Unsupported symbol. Supported: {', '.join(SUPPORTED_PAIRS.keys())}")
-        return
+def prepare_data(df):
+    close_prices = df['close'].values.reshape(-1, 1)
+    X, y = [], []
+    for i in range(len(close_prices) - 10):
+        X.append(close_prices[i:i+10])
+        y.append(close_prices[i+10])
+    return np.array(X), np.array(y)
 
-    df = fetch_candle_data(symbol)
-    if df is None or df.empty:
-        update.message.reply_text("Failed to fetch price data. Try again later.")
-        return
-
-    last_candle = df.iloc[-1]
-    price = last_candle['close']
-    update.message.reply_text(f"Current price of {SUPPORTED_PAIRS[symbol]} is {price:.5f}")
+def predict_next_close(df):
+    X, y = prepare_data(df)
+    if len(X) == 0:
+        return None
+    model = create_lstm_model()
+    model.fit(X, y, epochs=10, verbose=0)
+    latest_sequence = df['close'].values[-10:].reshape(1, 10, 1)
+    prediction = model.predict(latest_sequence, verbose=0)[0][0]
+    return prediction
 
 def predict_command(update: Update, context: CallbackContext):
-    if not context.args:
-        update.message.reply_text("Please provide a symbol, e.g., /predict AUDUSD")
+    if len(context.args) != 2:
+        update.message.reply_text("Use: /predict SYMBOL INTERVAL (e.g., /predict AUDUSD 15min)")
         return
-    symbol = context.args[0].upper()
+
+    symbol, interval = context.args[0].upper(), context.args[1]
     if symbol not in SUPPORTED_PAIRS:
-        update.message.reply_text(f"Unsupported symbol. Supported: {', '.join(SUPPORTED_PAIRS.keys())}")
+        update.message.reply_text(f"Invalid pair. Use one of: {', '.join(SUPPORTED_PAIRS.keys())}")
+        return
+    if interval not in SUPPORTED_INTERVALS:
+        update.message.reply_text(f"Invalid interval. Use: {', '.join(SUPPORTED_INTERVALS)}")
         return
 
-    df = fetch_candle_data(symbol)
+    df = fetch_candles(symbol, interval)
     if df is None or df.empty:
-        update.message.reply_text("Failed to fetch candle data. Try again later.")
+        update.message.reply_text("Failed to fetch data.")
         return
 
-    prediction = simple_candle_prediction(df)
-    last_time = df.index[-1]
-    next_candle_time_utc = last_time + timedelta(minutes=15)
+    prediction = predict_next_close(df)
+    if prediction is None:
+        update.message.reply_text("Prediction failed.")
+        return
 
-    utc_zone = pytz.utc
-    ist_zone = pytz.timezone('Asia/Kolkata')
-    next_candle_time_utc = utc_zone.localize(next_candle_time_utc)
-    next_candle_time_ist = next_candle_time_utc.astimezone(ist_zone)
+    last_close = df['close'].iloc[-1]
+    direction = "UP" if prediction > last_close else "DOWN"
+    next_time = df.index[-1] + timedelta(minutes=int(interval.replace("min", "")))
 
-    next_candle_time_str = next_candle_time_ist.strftime('%Y-%m-%d %H:%M:%S')
+    ist_time = pytz.utc.localize(next_time).astimezone(pytz.timezone('Asia/Kolkata'))
+    ist_str = ist_time.strftime('%Y-%m-%d %H:%M:%S')
 
     update.message.reply_text(
-        f"Next 15-min candle prediction for {SUPPORTED_PAIRS[symbol]}:\n"
-        f"{prediction}\n"
-        f"Expected start time: {next_candle_time_str} (IST)"
+        f"{SUPPORTED_PAIRS[symbol]} ({interval})\n"
+        f"Last Close: {last_close:.5f}\n"
+        f"Predicted Next: {prediction:.5f}\n"
+        f"Direction: {direction}\n"
+        f"Next Candle Time (IST): {ist_str}"
     )
 
-def error_handler(update: object, context: CallbackContext) -> None:
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text("Welcome! Use /predict SYMBOL INTERVAL (e.g., /predict AUDUSD 15min)")
 
 def main():
     updater = Updater(TELEGRAM_BOT_TOKEN)
-    dispatcher = updater.dispatcher
+    dp = updater.dispatcher
 
-    dispatcher.add_handler(CommandHandler("price", price_command))
-    dispatcher.add_handler(CommandHandler("predict", predict_command))
-    dispatcher.add_error_handler(error_handler)
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("predict", predict_command))
 
     updater.start_polling()
-    logger.info("Bot started. Listening for commands...")
+    logger.info("Bot started")
     updater.idle()
 
 if __name__ == '__main__':
