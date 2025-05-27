@@ -13,7 +13,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 ALPHA_VANTAGE_API_KEY = 'RFGIIVCI3VGEZ41Y'  # Tumhari API key
-TELEGRAM_BOT_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN_HERE'  # Apna Telegram bot token yahan daalo
+TELEGRAM_BOT_TOKEN = '7430804447:AAHWWJXODevJ5JuT-sCujdcxHMYUnFVSn_c'  # Apna Telegram bot token yahan daalo
 
 SUPPORTED_PAIRS = {
     'AUDCAD': 'AUD/CAD',
