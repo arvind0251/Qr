@@ -12,8 +12,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-ALPHA_VANTAGE_API_KEY = 'RFGIIVCI3VGEZ41Y'  # Tumhari API key
-TELEGRAM_BOT_TOKEN = '7430804447:AAHWWJXODevJ5JuT-sCujdcxHMYUnFVSn_c'  # Apna Telegram bot token yahan daalo
+TWELVE_API_KEY = '210fdbf5fb9a488e819654b9d51b7edf'  # Tumhari Twelve Data API key
+TELEGRAM_BOT_TOKEN = '7430804447:AAHWWJXODevJ5JuT-sCujdcxHMYUnFVSn_c'  # Telegram bot token
 
 SUPPORTED_PAIRS = {
     'AUDCAD': 'AUD/CAD',
@@ -26,35 +26,34 @@ SUPPORTED_PAIRS = {
 }
 
 def fetch_candle_data(symbol: str):
-    """Fetch latest 50 15-min candles for given forex pair from Alpha Vantage"""
+    """Fetch latest 50 15-min candles for given forex pair from Twelve Data"""
+    twelve_symbol = SUPPORTED_PAIRS[symbol]
     url = (
-        'https://www.alphavantage.co/query?function=FX_INTRADAY'
-        f'&from_symbol={symbol[:3]}&to_symbol={symbol[3:]}'
-        '&interval=15min&outputsize=compact'
-        f'&apikey={ALPHA_VANTAGE_API_KEY}'
+        f"https://api.twelvedata.com/time_series?symbol={twelve_symbol}"
+        f"&interval=15min&outputsize=50&apikey={TWELVE_API_KEY}"
     )
     response = requests.get(url)
     if response.status_code != 200:
         logger.error(f"Failed to fetch data for {symbol}, status code: {response.status_code}")
         return None
     data = response.json()
-    if 'Time Series FX (15min)' not in data:
+    if "values" not in data:
         logger.error(f"No candle data found for {symbol}: {data}")
         return None
 
-    time_series = data['Time Series FX (15min)']
-    df = pd.DataFrame.from_dict(time_series, orient='index')
+    df = pd.DataFrame(data["values"])
     df = df.rename(columns={
-        '1. open': 'open',
-        '2. high': 'high',
-        '3. low': 'low',
-        '4. close': 'close'
+        'open': 'open',
+        'high': 'high',
+        'low': 'low',
+        'close': 'close',
+        'datetime': 'datetime'
     })
-    df.index = pd.to_datetime(df.index)
-    df = df.sort_index()
-    df = df.tail(50)
+    df['datetime'] = pd.to_datetime(df['datetime'])
+    df = df.sort_values('datetime')
     for col in ['open', 'high', 'low', 'close']:
         df[col] = df[col].astype(float)
+    df = df.set_index('datetime')
     return df
 
 def simple_candle_prediction(df: pd.DataFrame):
@@ -98,11 +97,9 @@ def predict_command(update: Update, context: CallbackContext):
         return
 
     prediction = simple_candle_prediction(df)
-
-    last_time = df.index[-1]  # UTC time of last candle
+    last_time = df.index[-1]
     next_candle_time_utc = last_time + timedelta(minutes=15)
 
-    # Convert UTC to IST timezone
     utc_zone = pytz.utc
     ist_zone = pytz.timezone('Asia/Kolkata')
     next_candle_time_utc = utc_zone.localize(next_candle_time_utc)
