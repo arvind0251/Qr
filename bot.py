@@ -24,7 +24,7 @@ SUPPORTED_PAIRS = {
     'AUDUSD': 'AUD/USD',
     'USDCAD': 'USD/CAD',
     'USDCHF': 'USD/CHF',
-    'NZDUSD': 'NZD/USD'
+    'NZDUSD': 'NZD/USD',
     'AUDCAD': 'AUD/CAD'
 }
 
