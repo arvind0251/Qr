@@ -25,6 +25,7 @@ SUPPORTED_PAIRS = {
     'USDCAD': 'USD/CAD',
     'USDCHF': 'USD/CHF',
     'NZDUSD': 'NZD/USD'
+    'AUDCAD': 'AUD/CAD'
 }
 
 def fetch_1min_candle_data(symbol: str):
