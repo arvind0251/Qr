@@ -46,21 +46,24 @@ SUPPORTED_PAIRS = {
 }
 
 def fetch_1min_candle_data(pair: str):
-    url = f"https://api.polygon.io/v2/aggs/ticker/{pair}/range/1/minute/50/2023-12-01/2023-12-01?adjusted=true&sort=desc&limit=50&apiKey={POLYGON_API_KEY}"
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+    url = (
+        f"https://api.polygon.io/v2/aggs/ticker/{pair}/range/1/minute/"
+        f"{today}/{today}?adjusted=true&sort=desc&limit=50&apiKey={POLYGON_API_KEY}"
+    )
     response = requests.get(url)
     if response.status_code != 200:
-        logger.error("Failed to fetch data")
+        logger.error(f"Failed to fetch data: HTTP {response.status_code}")
+        logger.error(f"Response: {response.text}")
         return None
     data = response.json()
     if 'results' not in data:
-        logger.error("No results in data")
+        logger.error(f"No results in data: {data}")
         return None
 
     df = pd.DataFrame(data['results'])
     df['timestamp'] = pd.to_datetime(df['t'], unit='ms')
-    df = df.rename(columns={
-        'o': 'open', 'h': 'high', 'l': 'low', 'c': 'close'
-    })
+    df = df.rename(columns={'o': 'open', 'h': 'high', 'l': 'low', 'c': 'close'})
     df = df[['timestamp', 'open', 'high', 'low', 'close']]
     df = df.sort_values('timestamp')
     return df
